@@ -365,3 +365,204 @@ def update_campaign_bidding_strategy(
     return {"updated": response.results[0].resource_name}
   except GoogleAdsException as e:
     raise ToolError("\n".join(str(i) for i in e.failure.errors)) from e
+
+
+@mcp.tool()
+def update_campaign_url_settings(
+    campaign_id: str,
+    customer_id: str,
+    tracking_url_template: str | None = None,
+    custom_parameters: list[dict[str, str]] | None = None,
+    login_customer_id: str | None = None,
+) -> dict[str, Any]:
+  """Updates a campaign's tracking URL template and/or custom URL parameters.
+
+  Used for ValueTrack-baserade UTM-mallar (t.ex. {lpurl}?utm_source=google&...&utm_campaign={_campaign})
+  och de associerade custom parameters som mallen refererar till.
+
+  Args:
+      campaign_id: The campaign ID to update.
+      customer_id: The customer account ID (digits only).
+      tracking_url_template: (Optional) Tracking template, t.ex.
+          "{lpurl}?utm_source=google&utm_medium=cpc&utm_campaign={_campaign}&utm_content={_adgroup}&utm_term={keyword}&gclid={gclid}".
+          Skicka None för att låta nuvarande mall vara orörd, tom strang "" för att rensa.
+      custom_parameters: (Optional) Lista av {"key": "...", "value": "..."}-dicts.
+          Ersätter alla befintliga custom parameters om angivet. Skicka None för att
+          lämna orörda, tom lista [] för att rensa.
+          Exempel: [{"key": "_campaign", "value": "fakturera_utan_foretag"}]
+      login_customer_id: (Optional) The MCC account ID.
+
+  Returns:
+      A dict with the updated resource name and what fields were changed.
+  """
+  if tracking_url_template is None and custom_parameters is None:
+    raise ToolError("Anger minst ett av tracking_url_template eller custom_parameters.")
+
+  ads_client = _get_mutate_client(customer_id, login_customer_id)
+  campaign_service = ads_client.get_service("CampaignService")
+
+  operation = ads_client.get_type("CampaignOperation")
+  campaign = operation.update
+  campaign.resource_name = f"customers/{customer_id}/campaigns/{campaign_id}"
+
+  changed = []
+
+  if tracking_url_template is not None:
+    campaign.tracking_url_template = tracking_url_template
+    operation.update_mask.paths.append("tracking_url_template")
+    changed.append("tracking_url_template")
+
+  if custom_parameters is not None:
+    # Bygg om hela listan av CustomParameter
+    for param in custom_parameters:
+      cp = ads_client.get_type("CustomParameter")
+      cp.key = param["key"]
+      cp.value = param["value"]
+      campaign.url_custom_parameters.append(cp)
+    operation.update_mask.paths.append("url_custom_parameters")
+    changed.append(f"url_custom_parameters ({len(custom_parameters)} st)")
+
+  try:
+    response = campaign_service.mutate_campaigns(
+        customer_id=customer_id,
+        operations=[operation],
+    )
+    return {"updated": response.results[0].resource_name, "changed": changed}
+  except GoogleAdsException as e:
+    raise ToolError("\n".join(str(i) for i in e.failure.errors)) from e
+
+
+@mcp.tool()
+def rename_ad_group(
+    ad_group_id: str,
+    new_name: str,
+    customer_id: str,
+    login_customer_id: str | None = None,
+) -> dict[str, Any]:
+  """Renames an ad group.
+
+  Args:
+      ad_group_id: The ad group ID to rename.
+      new_name: The new ad group name (max 255 chars, must be unique within campaign).
+      customer_id: The customer account ID (digits only).
+      login_customer_id: (Optional) The MCC account ID.
+
+  Returns:
+      A dict with the updated resource name.
+  """
+  ads_client = _get_mutate_client(customer_id, login_customer_id)
+  ad_group_service = ads_client.get_service("AdGroupService")
+
+  operation = ads_client.get_type("AdGroupOperation")
+  ad_group = operation.update
+  ad_group.resource_name = f"customers/{customer_id}/adGroups/{ad_group_id}"
+  ad_group.name = new_name
+  operation.update_mask.paths.append("name")
+
+  try:
+    response = ad_group_service.mutate_ad_groups(
+        customer_id=customer_id,
+        operations=[operation],
+    )
+    return {"updated": response.results[0].resource_name, "new_name": new_name}
+  except GoogleAdsException as e:
+    raise ToolError("\n".join(str(i) for i in e.failure.errors)) from e
+
+
+@mcp.tool()
+def rename_campaign(
+    campaign_id: str,
+    new_name: str,
+    customer_id: str,
+    login_customer_id: str | None = None,
+) -> dict[str, Any]:
+  """Renames a campaign.
+
+  Args:
+      campaign_id: The campaign ID to rename.
+      new_name: The new campaign name (max 255 chars, must be unique within account).
+      customer_id: The customer account ID (digits only).
+      login_customer_id: (Optional) The MCC account ID.
+
+  Returns:
+      A dict with the updated resource name.
+  """
+  ads_client = _get_mutate_client(customer_id, login_customer_id)
+  campaign_service = ads_client.get_service("CampaignService")
+
+  operation = ads_client.get_type("CampaignOperation")
+  campaign = operation.update
+  campaign.resource_name = f"customers/{customer_id}/campaigns/{campaign_id}"
+  campaign.name = new_name
+  operation.update_mask.paths.append("name")
+
+  try:
+    response = campaign_service.mutate_campaigns(
+        customer_id=customer_id,
+        operations=[operation],
+    )
+    return {"updated": response.results[0].resource_name, "new_name": new_name}
+  except GoogleAdsException as e:
+    raise ToolError("\n".join(str(i) for i in e.failure.errors)) from e
+
+
+@mcp.tool()
+def update_ad_group_url_settings(
+    ad_group_id: str,
+    customer_id: str,
+    tracking_url_template: str | None = None,
+    custom_parameters: list[dict[str, str]] | None = None,
+    login_customer_id: str | None = None,
+) -> dict[str, Any]:
+  """Updates an ad group's tracking URL template and/or custom URL parameters.
+
+  Custom parameters på ad_group-nivå skriver över de på campaign-nivå för samma key.
+  Tracking template på ad_group-nivå skriver över campaign-nivå om satt.
+
+  Args:
+      ad_group_id: The ad group ID to update.
+      customer_id: The customer account ID (digits only).
+      tracking_url_template: (Optional) Tracking template. Skicka None för att lamna orord,
+          tom strang "" för att rensa.
+      custom_parameters: (Optional) Lista av {"key": "...", "value": "..."}-dicts.
+          Ersätter alla befintliga custom parameters för annonsgruppen.
+          Exempel: [{"key": "_adgroup", "value": "hantverkare_search"}]
+      login_customer_id: (Optional) The MCC account ID.
+
+  Returns:
+      A dict with the updated resource name and what fields were changed.
+  """
+  if tracking_url_template is None and custom_parameters is None:
+    raise ToolError("Anger minst ett av tracking_url_template eller custom_parameters.")
+
+  ads_client = _get_mutate_client(customer_id, login_customer_id)
+  ad_group_service = ads_client.get_service("AdGroupService")
+
+  operation = ads_client.get_type("AdGroupOperation")
+  ad_group = operation.update
+  ad_group.resource_name = f"customers/{customer_id}/adGroups/{ad_group_id}"
+
+  changed = []
+
+  if tracking_url_template is not None:
+    ad_group.tracking_url_template = tracking_url_template
+    operation.update_mask.paths.append("tracking_url_template")
+    changed.append("tracking_url_template")
+
+  if custom_parameters is not None:
+    for param in custom_parameters:
+      cp = ads_client.get_type("CustomParameter")
+      cp.key = param["key"]
+      cp.value = param["value"]
+      ad_group.url_custom_parameters.append(cp)
+    operation.update_mask.paths.append("url_custom_parameters")
+    changed.append(f"url_custom_parameters ({len(custom_parameters)} st)")
+
+  try:
+    response = ad_group_service.mutate_ad_groups(
+        customer_id=customer_id,
+        operations=[operation],
+    )
+    return {"updated": response.results[0].resource_name, "changed": changed}
+  except GoogleAdsException as e:
+    raise ToolError("\n".join(str(i) for i in e.failure.errors)) from e
