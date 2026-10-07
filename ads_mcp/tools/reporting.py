@@ -507,6 +507,52 @@ def rename_campaign(
 
 
 @mcp.tool()
+def set_campaign_status(
+    campaign_id: str,
+    status: str,
+    customer_id: str,
+    login_customer_id: str | None = None,
+) -> dict[str, Any]:
+  """Pausar eller aktiverar en kampanj.
+
+  Tillagd 2026-10-07: kampanjen "Fakturera utan företag – Paidin" stod ENABLED
+  trots att all annonsering pausats 2026-09-30 (DEC-2026-0149), och servern
+  saknade ett sätt att pausa en kampanj. REMOVED tillåts inte: borttagning går
+  inte att ångra och görs i Google Ads-gränssnittet.
+
+  Args:
+      campaign_id: The campaign ID.
+      status: PAUSED or ENABLED.
+      customer_id: The customer account ID (digits only).
+      login_customer_id: (Optional) The MCC account ID.
+
+  Returns:
+      A dict with the updated resource name and the new status.
+  """
+  status = status.upper()
+  if status not in ("PAUSED", "ENABLED"):
+    raise ToolError("status måste vara PAUSED eller ENABLED.")
+
+  ads_client = _get_mutate_client(customer_id, login_customer_id)
+  campaign_service = ads_client.get_service("CampaignService")
+
+  operation = ads_client.get_type("CampaignOperation")
+  campaign = operation.update
+  campaign.resource_name = f"customers/{customer_id}/campaigns/{campaign_id}"
+  campaign.status = ads_client.enums.CampaignStatusEnum[status].value
+  operation.update_mask.paths.append("status")
+
+  try:
+    response = campaign_service.mutate_campaigns(
+        customer_id=customer_id,
+        operations=[operation],
+    )
+    return {"updated": response.results[0].resource_name, "status": status}
+  except GoogleAdsException as e:
+    raise ToolError("\n".join(str(i) for i in e.failure.errors)) from e
+
+
+@mcp.tool()
 def update_ad_group_url_settings(
     ad_group_id: str,
     customer_id: str,
